@@ -1,12 +1,15 @@
+@testitem "_" begin
+    import Aqua
+    Aqua.test_all(ImGuiExtra)
+
+    import CompatHelperLocal as CHL
+    CHL.@check()
+end
+
 @testitem "advance! playback logic" begin
-    # Independent (input state → expected) table for the pure playback core `advance!`.
-    # Expected values are derived by hand from the loop semantics, NOT by running `advance!`.
-    #
-    # Timing: step_interval = 1 / SPEEDS[speed_i] (BASE_RATE = 1). speed_i=3 → SPEEDS=1.0 → step=1.0.
-    # last=0.0, now=1e6 forces an advance; now=last forces "too soon". Advancing sets last:=now.
-    #
-    # Columns: init Player state (playing, speed_i, loop, dir, last) + call args (idx, n, now)
-    #          → expected (idx, dir, playing, last) after the call.
+    # (input state → expected) table, expected derived by hand from the loop semantics.
+    # Timing: step_interval = 1/SPEEDS[speed_i] (BASE_RATE=1). speed_i=3 → step=1.0.
+    # last=0.0, now=1e6 forces an advance; now=last forces "too soon"; advancing sets last:=now.
     cases = [
         # ── normal forward / backward advance (interior; dir & playing unchanged, last := now) ──
         (name="fwd",              playing=true,  speed_i=3, loop=LOOP,   dir=+1, last=0.0,   idx=3,  n=10, now=1e6,
