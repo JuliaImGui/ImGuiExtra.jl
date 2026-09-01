@@ -9,10 +9,11 @@ const SPEEDS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0)   # ×-multipliers on
 const BASE_RATE = 1.0                                        # snapshots per second at 1×
 
 """
-    Player()
+    Player(; speed = 1.0, loop = LOOP)
 
 Persistent playback state for [`ScrubberInt`](@ref). The index itself stays caller-owned
-(imgui-style); this holds only play/pause, speed, loop mode, and direction.
+(imgui-style); this holds only play/pause, speed, loop mode, and direction. `speed` must be one of
+`SPEEDS` — the popup slider only ever produces those, so an off-lattice value would silently snap.
 """
 mutable struct Player
     playing::Bool
@@ -21,7 +22,9 @@ mutable struct Player
     dir::Int          # +1 / -1
     last::Float64     # GetTime() at the last advance
 end
-Player() = Player(false, 3, LOOP, +1, 0.0)
+Player(; speed = 1.0, loop = LOOP) =
+    Player(false, @something(findfirst(==(speed), SPEEDS), error("speed $speed is not one of $SPEEDS")),
+           loop, +1, 0.0)
 
 step_interval(p::Player) = 1.0 / (BASE_RATE * SPEEDS[p.speed_i])   # seconds per snapshot
 

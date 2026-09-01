@@ -6,6 +6,19 @@
     CHL.@check()
 end
 
+@testitem "Player keyword constructor" begin
+    using ImGuiExtra: SPEEDS, step_interval
+
+    # `Player` is mutable, so `==` is identity: compare fields, never two objects
+    p = Player()
+    @test (p.playing, p.speed_i, p.loop, p.dir, p.last) == (false, 3, LOOP, +1, 0.0)
+    @test Player(; speed = 16.0).speed_i == 7 && SPEEDS[7] == 16.0
+    @test step_interval(Player(; speed = 16.0)) == 1 / 16
+    @test Player(; loop = BOUNCE).loop === BOUNCE
+    @test_throws "not one of" Player(; speed = 3.0)     # between 2× and 4×, not on the lattice
+    @test Player(; speed = 16).speed_i == 7             # the lattice is numeric, so an Int lands on it
+end
+
 @testitem "advance! playback logic" begin
     # (input state → expected) table, expected derived by hand from the loop semantics.
     # Timing: step_interval = 1/SPEEDS[speed_i] (BASE_RATE=1). speed_i=3 → step=1.0.
