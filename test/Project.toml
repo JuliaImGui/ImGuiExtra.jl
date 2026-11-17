@@ -8,7 +8,7 @@ TestItems = "1c621080-faea-4a02-84b6-bbd5e436b8fe"
 
 [compat]
 Aqua = "0.8"
-CompatHelperLocal = "0.1"
+CompatHelperLocal = "0.2"
 IntervalSets = "0.7"
 Test = "1.10"
 TestItemRunner = "1"
