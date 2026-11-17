@@ -97,6 +97,68 @@ end
     end
 end
 
+@testitem "advance! continuous playback" begin
+    using IntervalSets
+    # (input state → expected), expected by hand: t + dir·speed·(now − last), then the ends per loop mode.
+    cases = [
+        # ── interior motion (last := now) ──
+        (name="fwd",              playing=true,  speed=2.0, loop=LOOP,   dir=+1, last=0.0, t=3.0, iv=0..10, now=1.5,
+                                  exp_t=6.0,  exp_dir=+1, exp_playing=true,  exp_last=1.5),
+        (name="bwd",              playing=true,  speed=2.0, loop=LOOP,   dir=-1, last=0.0, t=5.0, iv=0..10, now=1.0,
+                                  exp_t=3.0,  exp_dir=-1, exp_playing=true,  exp_last=1.0),
+        (name="lands on end",     playing=true,  speed=2.0, loop=ONCE,   dir=+1, last=0.0, t=8.0, iv=0..10, now=1.0,
+                                  exp_t=10.0, exp_dir=+1, exp_playing=true,  exp_last=1.0),
+        (name="offset interval",  playing=true,  speed=0.5, loop=LOOP,   dir=+1, last=0.0, t=3.0, iv=2..4,  now=1.0,
+                                  exp_t=3.5,  exp_dir=+1, exp_playing=true,  exp_last=1.0),
+        # ── LOOP wraps to the opposite end, overshoot carried over ──
+        (name="loop wrap top",    playing=true,  speed=2.0, loop=LOOP,   dir=+1, last=0.0, t=9.0, iv=0..10, now=1.0,
+                                  exp_t=1.0,  exp_dir=+1, exp_playing=true,  exp_last=1.0),
+        (name="loop wrap bottom", playing=true,  speed=2.0, loop=LOOP,   dir=-1, last=0.0, t=1.0, iv=0..10, now=1.0,
+                                  exp_t=9.0,  exp_dir=-1, exp_playing=true,  exp_last=1.0),
+        # ── BOUNCE reflects off the end and reverses, overshoot carried over ──
+        (name="bounce top",       playing=true,  speed=2.0, loop=BOUNCE, dir=+1, last=0.0, t=9.0, iv=0..10, now=1.0,
+                                  exp_t=9.0,  exp_dir=-1, exp_playing=true,  exp_last=1.0),
+        (name="bounce bottom",    playing=true,  speed=2.0, loop=BOUNCE, dir=-1, last=0.0, t=1.0, iv=0..10, now=1.0,
+                                  exp_t=1.0,  exp_dir=+1, exp_playing=true,  exp_last=1.0),
+        # ── huge backlog (e.g. window hidden): lands where wall-clock time says ──
+        (name="huge loop",        playing=true,  speed=1.0, loop=LOOP,   dir=+1, last=0.0, t=3.0, iv=0..10, now=1e6,
+                                  exp_t=3.0,  exp_dir=+1, exp_playing=true,  exp_last=1e6),
+        (name="huge bounce up",   playing=true,  speed=1.0, loop=BOUNCE, dir=+1, last=0.0, t=3.0, iv=0..10, now=1_000_005.0,
+                                  exp_t=8.0,  exp_dir=+1, exp_playing=true,  exp_last=1_000_005.0),
+        (name="huge bounce down", playing=true,  speed=1.0, loop=BOUNCE, dir=+1, last=0.0, t=3.0, iv=0..10, now=1_000_012.0,
+                                  exp_t=5.0,  exp_dir=-1, exp_playing=true,  exp_last=1_000_012.0),
+        (name="huge once",        playing=true,  speed=1.0, loop=ONCE,   dir=+1, last=0.0, t=3.0, iv=0..10, now=1e6,
+                                  exp_t=10.0, exp_dir=+1, exp_playing=false, exp_last=1e6),
+        # ── ONCE clamps to the end and stops ──
+        (name="once stop top",    playing=true,  speed=2.0, loop=ONCE,   dir=+1, last=0.0, t=9.0, iv=0..10, now=1.0,
+                                  exp_t=10.0, exp_dir=+1, exp_playing=false, exp_last=1.0),
+        (name="once stop bottom", playing=true,  speed=2.0, loop=ONCE,   dir=-1, last=0.0, t=1.0, iv=0..10, now=1.0,
+                                  exp_t=0.0,  exp_dir=-1, exp_playing=false, exp_last=1.0),
+        # ── no motion ──
+        (name="not playing",      playing=false, speed=2.0, loop=LOOP,   dir=+1, last=0.0, t=3.0, iv=0..10, now=1.0,
+                                  exp_t=3.0,  exp_dir=+1, exp_playing=false, exp_last=0.0),
+        (name="zero width",       playing=true,  speed=2.0, loop=LOOP,   dir=+1, last=0.0, t=2.0, iv=2..2,  now=1.0,
+                                  exp_t=2.0,  exp_dir=+1, exp_playing=true,  exp_last=0.0),
+        (name="no time elapsed",  playing=true,  speed=2.0, loop=LOOP,   dir=+1, last=5.0, t=3.0, iv=0..10, now=5.0,
+                                  exp_t=3.0,  exp_dir=+1, exp_playing=true,  exp_last=5.0),
+        # ── narrower numeric types accepted via Real signature ──
+        (name="float32",          playing=true,  speed=2.0, loop=LOOP,   dir=+1, last=0.0, t=3f0, iv=0f0..10f0, now=1f0,
+                                  exp_t=5.0,  exp_dir=+1, exp_playing=true,  exp_last=1.0),
+    ]
+
+    for c in cases
+        @testset "$(c.name)" begin
+            p = Player(c.playing, c.speed, c.loop, c.dir, c.last)
+            got = @inferred advance!(p, c.t, c.iv, c.now)
+            @test got == c.exp_t
+            @test got isa typeof(c.t)
+            @test p.dir == c.exp_dir
+            @test p.playing == c.exp_playing
+            @test p.last == c.exp_last
+        end
+    end
+end
+
 @testitem "start value" begin
     using ImGuiExtra: _start_value
     # (loop, dir, v, first, last) → value playback resumes from
@@ -110,6 +172,26 @@ end
     ]
     for ((loop, dir, v, first, last), expected) in cases
         @test _start_value(Player(false, 1.0, loop, dir, 0.0), v, first, last) == expected
+    end
+end
+
+@testitem "default float label" begin
+    using ImGuiExtra: _value_formatter
+    using IntervalSets
+    # (interval, x) → text: decimals chosen so one last-digit unit ≈ width/1000
+    cases = [
+        (0..10, 3.0)                    => "3.00",
+        (0..10, 10)                     => "10.00",       # Int endpoint formats like the floats
+        (0.0..1.0, 0.123456)            => "0.123",
+        (0..2000, 1234.5)               => "1234",
+        (0.0..0.001, 0.000123456)       => "0.000123",
+        (1.7e9..1.7e9+3600, 1.7e9+1234.56) => "1700001235",
+        (-5.0..5.0, -1.5)               => "-1.50",
+        (0f0..10f0, 2.0f0)              => "2.00",
+        (2.0..2.0, 2.0)                 => "2",           # zero width: no decimals, no error
+    ]
+    for ((iv, x), expected) in cases
+        @test _value_formatter(iv)(x) == expected
     end
 end
 

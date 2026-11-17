@@ -8,9 +8,9 @@ Playback behavior at the ends of the range: `ONCE` (stop), `LOOP` (wrap), `BOUNC
 """
     Player(; speed = nothing, loop = LOOP)
 
-Persistent playback state for [`ScrubberInt`](@ref). The index itself stays caller-owned
-(imgui-style); this holds only play/pause, speed, loop mode, and direction.
-`speed` is in indices per second.
+Persistent playback state shared by [`ScrubberInt`](@ref) and [`ScrubberFloat`](@ref). The value itself
+stays caller-owned (imgui-style); this holds only play/pause, speed, loop mode, and direction.
+`speed` is in domain units per second: indices/s for `ScrubberInt`, value units/s for `ScrubberFloat`.
 If not given, the first draw sets it so that a full sweep takes 10 s.
 """
 @kwdef mutable struct Player
@@ -23,10 +23,12 @@ end
 
 """
     advance!(p::Player, idx::Integer, n::Integer, now) -> next_idx
+    advance!(p::Player, t::AbstractFloat, iv::AbstractInterval, now) -> next_t
 
-Pure playback core: given wall-clock `now`, current 1-based `idx`, and count `n`, return the
-next index (of the same type as `idx`) per `p`'s speed and loop mode: one step per `1/speed`
-seconds elapsed — several per call if due, remainder carried over.
+Pure playback core: given wall-clock `now`, return the next value per `p`'s speed and loop mode.
+Integer: one step per `1/speed` seconds elapsed — several per call if due, remainder carried over.
+Float: continuous motion by `speed × elapsed`; LOOP/BOUNCE carry the overshoot past an end.
+The result has the type of `idx`/`t`.
 Mutates `p.dir`/`p.playing`/`p.last`. Headless-testable.
 """
 function advance!(p::Player, idx::Integer, n::Integer, now::Real)
@@ -51,6 +53,22 @@ function step!(p::Player, idx::Integer, n::Integer)
     p.loop === LOOP   && return p.dir > 0 ? one(idx) : oftype(idx, n)          # wrap
     p.loop === BOUNCE && (p.dir = -p.dir; return idx + oftype(idx, p.dir))     # reverse
     p.playing = false; return idx                                  # ONCE: stop
+end
+
+function advance!(p::Player, t::AbstractFloat, iv::AbstractInterval, now::Real)
+    lo, hi = oftype.(t, endpoints(iv))
+    (!p.playing || hi <= lo) && return t
+    nxt = t + oftype(t, p.dir * p.speed * (now - p.last))
+    p.last = now
+    lo <= nxt <= hi && return nxt
+    w = hi - lo
+    p.loop === LOOP && return lo + mod(nxt - lo, w)        # wrap, overshoot carried over
+    if p.loop === BOUNCE                                   # reflect, overshoot carried over
+        r = mod(nxt - lo, 2w)                              # position along one there-and-back cycle
+        r > w && (p.dir = -p.dir)
+        return lo + (r <= w ? r : 2w - r)
+    end
+    p.playing = false; return clamp(nxt, lo, hi)           # ONCE: stop at the end
 end
 
 # Play/stop toggle plus its right-click speed/loop popup. Speed range follows the domain `width`:
@@ -80,6 +98,14 @@ end
 # Value to continue from when playback starts: parked at the ONCE end → jump to the other end.
 _start_value(p::Player, v, lo, hi) =
     p.loop === ONCE && v == (p.dir > 0 ? hi : lo) ? (p.dir > 0 ? lo : hi) : v
+
+# Default `ScrubberFloat` label for `iv`: fixed decimals resolving ~1/1000 of its width, so the text
+# keeps its width during playback and stays meaningful far from zero (e.g. Unix time).
+function _value_formatter(iv)
+    w = width(iv)
+    d = w > 0 ? max(0, -floor(Int, log10(w / 1000))) : 0
+    return x -> f"{x:.{d}f}"
+end
 
 # Slider text goes through printf, so a literal '%' in a label must be doubled.
 _escape_fmt(s) = replace(s, "%" => "%%")
@@ -115,6 +141,39 @@ function ScrubberInt(id, p::Player, idx::Ref{<:Integer}, n::Integer; label = str
     nv = advance!(p, v, n, CImGui.GetTime())
     nv != v && (v = nv; changed = true)
     idx[] = v
+    CImGui.PopID()
+    return changed
+end
+
+"""
+    ScrubberFloat(id, p::Player, t::Ref{<:AbstractFloat}, iv::AbstractInterval; label) -> changed::Bool
+
+Continuous counterpart of [`ScrubberInt`](@ref): `[play/stop] [====slider====]` over the interval `iv`,
+with the same right-click speed/loop popup and time-based auto-advance. `t[]` is mutated in place and
+`true` is returned iff it changed this frame. The slider shows `"label(t) / label(rightendpoint(iv))"`;
+the default `label` prints fixed decimals resolving ~1/1000 of the interval width.
+"""
+function ScrubberFloat(id, p::Player, t::Ref{<:AbstractFloat}, iv::AbstractInterval;
+                       label = _value_formatter(iv))
+    CImGui.PushID(id)
+    lo, hi = endpoints(iv)
+    v = clamp(t[], lo, hi)
+    changed = v != t[]
+    was_playing = p.playing
+    play_button!(p, hi - lo)
+    if !was_playing && p.playing
+        nv = _start_value(p, v, lo, hi)
+        nv != v && (v = nv; changed = true)
+    end
+    CImGui.SameLine()
+    let vv = Ref(Cfloat(v))
+        if @c CImGui.SliderFloat("##scrubval", &vv[], lo, hi, _escape_fmt("$(label(v)) / $(label(hi))"))
+            v = oftype(v, vv[]); changed = true; p.playing = false   # manual scrub pauses
+        end
+    end
+    nv = advance!(p, v, iv, CImGui.GetTime())
+    nv != v && (v = nv; changed = true)
+    t[] = v
     CImGui.PopID()
     return changed
 end

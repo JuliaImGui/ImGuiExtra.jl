@@ -1,11 +1,15 @@
 name = "ImGuiExtra"
 uuid = "ba5eba11-face-4afe-babe-ba5eba11face"
 authors = ["Alexander Plavin <alexander@plav.in>"]
-version = "0.1.2"
+version = "0.2.0"
 
 [deps]
 CImGui = "5d785b6c-b76f-510e-a07c-3070796c7e87"
+IntervalSets = "8197267c-284f-5f27-9208-e0e47529a953"
+PyFormattedStrings = "5f89f4a4-a228-4886-b223-c468a82ed5b9"
 
 [compat]
 CImGui = "8, 9"
-julia = "1.9"
+IntervalSets = "0.7"
+PyFormattedStrings = "0.1"
+julia = "1.10"
