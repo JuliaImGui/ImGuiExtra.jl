@@ -60,6 +60,8 @@ end
         (name="fast too soon",    playing=true,  speed_i=8, loop=LOOP,   dir=+1, last=0.0,   idx=4,  n=10, now=0.02,
                                   exp_idx=4,  exp_dir=+1, exp_playing=true,  exp_last=0.0),
         # ── narrower numeric types accepted via Integer/Real signature: Int32 idx/n, Float32 now, no MethodError ──
+        (name="int32 loop wrap",  playing=true,  speed_i=3, loop=LOOP,   dir=+1, last=0.0,   idx=Int32(10), n=Int32(10), now=1e6,
+                                  exp_idx=1,  exp_dir=+1, exp_playing=true,  exp_last=1e6),
         (name="int32/float32",    playing=true,  speed_i=3, loop=LOOP,   dir=+1, last=0.0,   idx=Int32(3), n=Int32(10), now=1f6,
                                   exp_idx=4,  exp_dir=+1, exp_playing=true,  exp_last=1e6),
     ]
@@ -67,8 +69,9 @@ end
     for c in cases
         @testset "$(c.name)" begin
             p = Player(c.playing, c.speed_i, c.loop, c.dir, c.last)
-            got = advance!(p, c.idx, c.n, c.now)
+            got = @inferred advance!(p, c.idx, c.n, c.now)
             @test got == c.exp_idx
+            @test got isa typeof(c.idx)
             @test p.dir == c.exp_dir
             @test p.playing == c.exp_playing
             @test p.last == c.exp_last

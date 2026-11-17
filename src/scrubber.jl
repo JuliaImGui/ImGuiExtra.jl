@@ -29,18 +29,19 @@ Player(; speed = 1.0, loop = LOOP) =
 step_interval(p::Player) = 1.0 / (BASE_RATE * SPEEDS[p.speed_i])   # seconds per snapshot
 
 """
-    advance!(p::Player, idx, n, now) -> next_idx
+    advance!(p::Player, idx::Integer, n::Integer, now) -> next_idx
 
 Pure playback core: given wall-clock `now`, current 1-based `idx`, and count `n`, return the
-next index per `p`'s speed and loop mode. Mutates `p.dir`/`p.playing`/`p.last`. Headless-testable.
+next index (of the same type as `idx`) per `p`'s speed and loop mode.
+Mutates `p.dir`/`p.playing`/`p.last`. Headless-testable.
 """
 function advance!(p::Player, idx::Integer, n::Integer, now::Real)
     (!p.playing || n <= 1 || now - p.last < step_interval(p)) && return idx
     p.last = now
-    nxt = idx + p.dir
+    nxt = idx + oftype(idx, p.dir)
     1 <= nxt <= n     && return nxt
-    p.loop === LOOP   && return p.dir > 0 ? 1 : n                  # wrap
-    p.loop === BOUNCE && (p.dir = -p.dir; return idx + p.dir)      # reverse
+    p.loop === LOOP   && return p.dir > 0 ? one(idx) : oftype(idx, n)          # wrap
+    p.loop === BOUNCE && (p.dir = -p.dir; return idx + oftype(idx, p.dir))     # reverse
     p.playing = false; return idx                                  # ONCE: stop
 end
 
@@ -64,14 +65,14 @@ end
 _escape_fmt(s) = replace(s, "%" => "%%")
 
 """
-    ScrubberInt(id, p::Player, idx::Ref{Int}, n::Int; label = string) -> changed::Bool
+    ScrubberInt(id, p::Player, idx::Ref{<:Integer}, n::Integer; label = string) -> changed::Bool
 
 Interactive scrubber row: `[<] [play/stop] [>] [====slider====]` plus a right-click
 speed/loop popup and time-based auto-advance. Same call shape as `CImGui.SliderInt` — `id` is
 the widget ID string; `idx[]` is mutated in place and `true` is returned iff it changed this
 frame. `label(i)` maps an index to its display text.
 """
-function ScrubberInt(id, p::Player, idx::Ref{Int}, n::Int; label = string)
+function ScrubberInt(id, p::Player, idx::Ref{<:Integer}, n::Integer; label = string)
     CImGui.PushID(id)
     v = clamp(idx[], 1, n)
     changed = v != idx[]
@@ -92,7 +93,7 @@ function ScrubberInt(id, p::Player, idx::Ref{Int}, n::Int; label = string)
     CImGui.SameLine()
     let vv = Ref(Cint(v))
         if @c CImGui.SliderInt("##scrubidx", &vv[], 1, n, "$(_escape_fmt(label(v)))  %d/$n")
-            v = Int(vv[]); changed = true; p.playing = false   # manual scrub pauses
+            v = oftype(v, vv[]); changed = true; p.playing = false   # manual scrub pauses
         end
     end
     nv = advance!(p, v, n, CImGui.GetTime())
