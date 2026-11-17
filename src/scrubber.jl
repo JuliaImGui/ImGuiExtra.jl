@@ -60,6 +60,9 @@ function speed_popup!(p::Player)
     end
 end
 
+# Slider text goes through printf, so a literal '%' in a label must be doubled.
+_escape_fmt(s) = replace(s, "%" => "%%")
+
 """
     ScrubberInt(id, p::Player, idx::Ref{Int}, n::Int; label = string) -> changed::Bool
 
@@ -71,7 +74,7 @@ frame. `label(i)` maps an index to its display text.
 function ScrubberInt(id, p::Player, idx::Ref{Int}, n::Int; label = string)
     CImGui.PushID(id)
     v = clamp(idx[], 1, n)
-    changed = false
+    changed = v != idx[]
     # `###id` keeps each button's ID tied to its stable tag, not its glyph (play toggles ▶⇄⏹).
     CImGui.Button("⏮###prev") && v > 1 && (v -= 1; changed = true; p.playing = false)
     CImGui.SameLine()
@@ -88,7 +91,7 @@ function ScrubberInt(id, p::Player, idx::Ref{Int}, n::Int; label = string)
     CImGui.Button("⏭###next") && v < n && (v += 1; changed = true; p.playing = false)
     CImGui.SameLine()
     let vv = Ref(Cint(v))
-        if @c CImGui.SliderInt("##scrubidx", &vv[], 1, n, "$(label(v))  %d/$n")
+        if @c CImGui.SliderInt("##scrubidx", &vv[], 1, n, "$(_escape_fmt(label(v)))  %d/$n")
             v = Int(vv[]); changed = true; p.playing = false   # manual scrub pauses
         end
     end

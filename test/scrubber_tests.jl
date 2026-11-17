@@ -75,3 +75,9 @@ end
         end
     end
 end
+
+@testitem "label escaping" begin
+    using ImGuiExtra: _escape_fmt
+    @test _escape_fmt("50% done") == "50%% done"
+    @test _escape_fmt("plain") == "plain"
+end
