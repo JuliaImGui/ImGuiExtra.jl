@@ -5,39 +5,47 @@ Playback behavior at the ends of the range: `ONCE` (stop), `LOOP` (wrap), `BOUNC
 """
 @enum LoopMode ONCE LOOP BOUNCE
 
-const SPEEDS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0)   # ×-multipliers on BASE_RATE
-const BASE_RATE = 1.0                                        # snapshots per second at 1×
-
 """
-    Player(; speed = 1.0, loop = LOOP)
+    Player(; speed = nothing, loop = LOOP)
 
 Persistent playback state for [`ScrubberInt`](@ref). The index itself stays caller-owned
-(imgui-style); this holds only play/pause, speed, loop mode, and direction. `speed` must be one of
-`SPEEDS` — the popup slider only ever produces those, so an off-lattice value would silently snap.
+(imgui-style); this holds only play/pause, speed, loop mode, and direction.
+`speed` is in indices per second.
+If not given, the first draw sets it so that a full sweep takes 10 s.
 """
-mutable struct Player
-    playing::Bool
-    speed_i::Int      # index into SPEEDS
-    loop::LoopMode
-    dir::Int          # +1 / -1
-    last::Float64     # GetTime() at the last advance
+@kwdef mutable struct Player
+    playing::Bool = false
+    speed::Union{Nothing,Float64} = nothing
+    loop::LoopMode = LOOP
+    dir::Int = +1         # +1 / -1
+    last::Float64 = 0.0   # GetTime() up to which playback has been accounted
 end
-Player(; speed = 1.0, loop = LOOP) =
-    Player(false, @something(findfirst(==(speed), SPEEDS), error("speed $speed is not one of $SPEEDS")),
-           loop, +1, 0.0)
-
-step_interval(p::Player) = 1.0 / (BASE_RATE * SPEEDS[p.speed_i])   # seconds per snapshot
 
 """
     advance!(p::Player, idx::Integer, n::Integer, now) -> next_idx
 
 Pure playback core: given wall-clock `now`, current 1-based `idx`, and count `n`, return the
-next index (of the same type as `idx`) per `p`'s speed and loop mode.
+next index (of the same type as `idx`) per `p`'s speed and loop mode: one step per `1/speed`
+seconds elapsed — several per call if due, remainder carried over.
 Mutates `p.dir`/`p.playing`/`p.last`. Headless-testable.
 """
 function advance!(p::Player, idx::Integer, n::Integer, now::Real)
-    (!p.playing || n <= 1 || now - p.last < step_interval(p)) && return idx
-    p.last = now
+    (!p.playing || n <= 1) && return idx
+    k = floor(Int, (now - p.last) * p.speed)          # steps due since the last advance
+    k == 0 && return idx
+    p.last += k / p.speed                             # keep the remainder → exact average rate
+    # After the first step LOOP/BOUNCE repeat with period n / 2(n-1), ONCE is stopped after ≤ n steps.
+    # `mod1` keeps that first step: BOUNCE states (1, dir=+1) and (n, dir=-1) are start-only, never revisited.
+    k = p.loop === LOOP ? mod1(k, n) : p.loop === BOUNCE ? mod1(k, 2(n - 1)) : min(k, n)
+    for _ in 1:k
+        idx = step!(p, idx, n)
+        p.playing || break
+    end
+    return idx
+end
+
+# One playback step from `idx` per `p.dir` and `p.loop`.
+function step!(p::Player, idx::Integer, n::Integer)
     nxt = idx + oftype(idx, p.dir)
     1 <= nxt <= n     && return nxt
     p.loop === LOOP   && return p.dir > 0 ? one(idx) : oftype(idx, n)          # wrap
@@ -45,12 +53,20 @@ function advance!(p::Player, idx::Integer, n::Integer, now::Real)
     p.playing = false; return idx                                  # ONCE: stop
 end
 
-# Right-click popup on the play button: speed slider + loop-mode radios.
-function speed_popup!(p::Player)
-    if CImGui.BeginPopupContextItem("##playopts")
-        let v = Ref(Cint(p.speed_i - 1))
-            (@c CImGui.SliderInt("##speed", &v[], 0, length(SPEEDS)-1, "$(SPEEDS[v[]+1])×")) &&
-                (p.speed_i = Int(v[]) + 1)
+# Play/stop toggle plus its right-click speed/loop popup. Speed range follows the domain `width`:
+# a full sweep takes 1000 s … 1 s.
+function play_button!(p::Player, width)
+    p.speed === nothing && (p.speed = width / 10)
+    # `###id` keeps the button's ID tied to its stable tag, not its glyph (play toggles ▶⇄⏹).
+    if CImGui.Button(p.playing ? "⏹###play" : "▶###play")
+        p.playing = !p.playing
+        p.last = CImGui.GetTime()
+    end
+    CImGui.SetItemTooltip("right-click: speed & loop")
+    if CImGui.BeginPopupContextItem("##playopts")        # must immediately follow the play button
+        let s = Ref(Cfloat(p.speed))
+            (@c CImGui.SliderFloat("##speed", &s[], width / 1000, width, "%.3g /s",
+                                   CImGui.ImGuiSliderFlags_Logarithmic)) && (p.speed = s[])
         end
         CImGui.Text("loop:")
         for (lbl, m) in (("once", ONCE), ("loop", LOOP), ("bounce", BOUNCE))
@@ -60,6 +76,10 @@ function speed_popup!(p::Player)
         CImGui.EndPopup()
     end
 end
+
+# Value to continue from when playback starts: parked at the ONCE end → jump to the other end.
+_start_value(p::Player, v, lo, hi) =
+    p.loop === ONCE && v == (p.dir > 0 ? hi : lo) ? (p.dir > 0 ? lo : hi) : v
 
 # Slider text goes through printf, so a literal '%' in a label must be doubled.
 _escape_fmt(s) = replace(s, "%" => "%%")
@@ -76,18 +96,14 @@ function ScrubberInt(id, p::Player, idx::Ref{<:Integer}, n::Integer; label = str
     CImGui.PushID(id)
     v = clamp(idx[], 1, n)
     changed = v != idx[]
-    # `###id` keeps each button's ID tied to its stable tag, not its glyph (play toggles ▶⇄⏹).
     CImGui.Button("⏮###prev") && v > 1 && (v -= 1; changed = true; p.playing = false)
     CImGui.SameLine()
-    if CImGui.Button(p.playing ? "⏹###play" : "▶###play")
-        p.playing = !p.playing
-        if p.playing
-            p.last = CImGui.GetTime()
-            p.loop === ONCE && v == (p.dir > 0 ? n : 1) && (v = p.dir > 0 ? 1 : n; changed = true)  # restart if parked at end
-        end
+    was_playing = p.playing
+    play_button!(p, n)
+    if !was_playing && p.playing
+        nv = _start_value(p, v, 1, n)
+        nv != v && (v = nv; changed = true)
     end
-    CImGui.SetItemTooltip("right-click: speed & loop")
-    speed_popup!(p)                            # must immediately follow the play button
     CImGui.SameLine()
     CImGui.Button("⏭###next") && v < n && (v += 1; changed = true; p.playing = false)
     CImGui.SameLine()
